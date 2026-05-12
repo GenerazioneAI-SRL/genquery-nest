@@ -1,0 +1,61 @@
+{
+  "name": "@generazioneai/genquery-nestjs",
+  "version": "0.1.0",
+  "description": "NestJS module for @generazioneai/genquery — DI-friendly TypeORM engine integration",
+  "license": "BSD-3-Clause",
+  "publishConfig": {
+    "access": "public"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/GenerazioneAI-SRL/genquery-nest.git"
+  },
+  "homepage": "https://github.com/GenerazioneAI-SRL/genquery-nest#readme",
+  "bugs": {
+    "url": "https://github.com/GenerazioneAI-SRL/genquery-nest/issues"
+  },
+  "keywords": [
+    "nestjs",
+    "nest",
+    "genquery",
+    "query",
+    "query-builder",
+    "typeorm",
+    "json-query",
+    "dsl",
+    "filter",
+    "pagination"
+  ],
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "build": "tsc",
+    "typecheck": "tsc --noEmit",
+    "prepublishOnly": "npm run build"
+  },
+  "peerDependencies": {
+    "@generazioneai/genquery": "^0.1.0",
+    "@nestjs/common": ">=9.0.0",
+    "@nestjs/core": ">=9.0.0",
+    "@nestjs/typeorm": ">=9.0.0",
+    "reflect-metadata": "^0.1.13 || ^0.2.0",
+    "rxjs": "^7.0.0",
+    "typeorm": ">=0.3.0"
+  },
+  "devDependencies": {
+    "@generazioneai/genquery": "^0.1.0",
+    "@nestjs/common": "^10.0.0",
+    "@nestjs/core": "^10.0.0",
+    "@nestjs/typeorm": "^10.0.0",
+    "@types/node": "^20.0.0",
+    "reflect-metadata": "^0.2.2",
+    "rxjs": "^7.8.1",
+    "typeorm": "^0.3.20",
+    "typescript": "^5.4.0"
+  }
+}
