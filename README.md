@@ -57,9 +57,11 @@ export class UsersService {
     >,
   ) {}
 
+  // `engine.run` is async and resolves to `{ data, current?, total? }`
+  // (see "Result shape" below).
   search(input: GenQueryInput<User>) {
     const qb = this.users.createQueryBuilder("User");
-    return this.engine.run(input, qb).getMany();
+    return this.engine.run(input, qb);
   }
 }
 ```
@@ -100,6 +102,30 @@ list(@GenQuery({ from: "query" }) input: GenQueryInput<User>) { /* ... */ }
 Express's default `qs` parser handles nested query strings out of the box (`?searchBy[firstName]=mario&pagination[page]=0` → nested objects). All values arrive as strings — fine for `string` / `enum` / date fields, but for `number` / `boolean` filters you'll want a coercion pipe upstream (or use POST with JSON).
 
 The root entity is derived from `qb.expressionMap.mainAlias.metadata.name` at runtime — no need to pass it explicitly. For the full query language reference (search modes, date ranges, OR, relations, pagination, etc.) see the [upstream docs](https://github.com/GenerazioneAI-SRL/genquery#documentation).
+
+## Result shape
+
+`engine.run` is async and resolves to a `PaginatedResult<T>` (re-exported from this package):
+
+```typescript
+interface PaginatedResult<T> {
+  data: T[];
+  current?: number;   // rows in this page (when pagination.showNumber is true)
+  total?: number;     // rows matching the query without pagination (when pagination.showTotal is true)
+}
+```
+
+Both flags default to `true`, so a plain `engine.run(input, qb)` returns `{ data, current, total }`. Opt out via the input:
+
+```typescript
+engine.run(
+  { searchBy: { firstName: "mario" }, pagination: { page: 0, perPage: 20, showTotal: false } },
+  qb,
+);
+// → { data, current }   ← no second SQL roundtrip for COUNT(*)
+```
+
+`showTotal: false` skips the `getManyAndCount` count query (faster on large tables); `showNumber: false` omits `data.length` from the response (cosmetic). When you need full control over execution — custom hydration, streaming, raw SQL — call `engine.runParsed` instead (sync, returns the mutated `SelectQueryBuilder`).
 
 ## Configuration
 
@@ -224,7 +250,7 @@ export class UsersController {
     input: GenQueryInput<User>,
   ) {
     const qb = this.users.createQueryBuilder("User");
-    return this.engine.run(input, qb).getMany();
+    return this.engine.run(input, qb);   // → { data, current?, total? }
   }
 }
 ```
@@ -333,7 +359,7 @@ Parse failures throw `QueryValidationError` (re-exported from this package). The
 import { QueryValidationError } from "@generazioneai/genquery-nestjs";
 
 try {
-  this.engine.run(input, qb);
+  await this.engine.run(input, qb);
 } catch (e) {
   if (e instanceof QueryValidationError) {
     throw new BadRequestException({ path: e.path, message: e.message });
@@ -373,6 +399,7 @@ import {
   // re-exported from @generazioneai/genquery
   GenQueryEngine,
   GenQueryInput,
+  PaginatedResult,
   ParsedQuery,
   Schema,
   QueryValidationError,

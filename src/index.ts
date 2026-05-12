@@ -35,6 +35,7 @@ export {
   parseDateTime,
   type Adapter,
   type GenQueryInput,
+  type PaginatedResult,
   type ParsedQuery,
   type Schema,
   type EntityDefinition,

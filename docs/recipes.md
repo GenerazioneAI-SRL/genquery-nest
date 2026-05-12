@@ -55,14 +55,23 @@ export class UsersService {
     >,
   ) {}
 
-  search(input: GenQueryInput<User>): Promise<User[]> {
+  // `engine.run` executes the query and resolves to a `PaginatedResult<User>`:
+  //   { data: User[], current?: number, total?: number }
+  // `current` / `total` are present iff the input asked for them via
+  // `pagination.showNumber` / `pagination.showTotal` (both default to `true`).
+  search(input: GenQueryInput<User>): Promise<PaginatedResult<User>> {
     const qb = this.users.createQueryBuilder("User");
-    return this.engine.run(input, qb).getMany();
+    return this.engine.run(input, qb);
   }
 
-  searchWithCount(input: GenQueryInput<User>): Promise<[User[], number]> {
+  // Opt out of the count when you only need the rows:
+  async listOnly(input: GenQueryInput<User>): Promise<User[]> {
     const qb = this.users.createQueryBuilder("User");
-    return this.engine.run(input, qb).getManyAndCount();
+    const { data } = await this.engine.run(
+      { ...input, pagination: { ...(input.pagination as object), showTotal: false } },
+      qb,
+    );
+    return data;
   }
 }
 ```
@@ -75,9 +84,8 @@ export class UsersController {
 
   // GET /users?searchBy[firstName]=mario&orderBy=createdAt&pagination[perPage]=20
   @Get()
-  async list(@GenQuery() input: GenQueryInput<User>) {
-    const [items, total] = await this.users.searchWithCount(input);
-    return { items, total };
+  list(@GenQuery() input: GenQueryInput<User>) {
+    return this.users.search(input);  // { data, current, total }
   }
 }
 ```
@@ -89,9 +97,8 @@ For large or deeply nested queries (heavy use of OR, several relation filters, m
 ```typescript
 @Post("search")
 @HttpCode(200)
-async search(@GenQuery() input: GenQueryInput<User>) {
-  const [items, total] = await this.users.searchWithCount(input);
-  return { items, total };
+search(@GenQuery() input: GenQueryInput<User>) {
+  return this.users.search(input);    // { data, current, total }
 }
 ```
 
@@ -111,7 +118,7 @@ list(
   input: GenQueryInput<User>,
 ) {
   const qb = this.users.createQueryBuilder("User");
-  return this.engine.run(input, qb).getMany();
+  return this.engine.run(input, qb);    // { data, current?, total? }
 }
 ```
 
@@ -126,7 +133,7 @@ publicList(
 ) {
   const qb = this.users.createQueryBuilder("User")
     .take(50);                              // app-imposed page size
-  return this.engine.run(input, qb).getMany();
+  return this.engine.run(input, qb);
 }
 ```
 
@@ -199,7 +206,7 @@ const qb = this.users.createQueryBuilder("User");
 return this.engine.runParsed(parsed, qb).getMany();
 ```
 
-The parsed form is plain data — safe to JSON-serialize into Redis or an in-memory LRU.
+The parsed form is plain data — safe to JSON-serialize into Redis or an in-memory LRU. `runParsed` is sync and returns the adapter's raw target (here the mutated `SelectQueryBuilder`) — call `getMany` / `getManyAndCount` yourself. Use this when you want to skip `engine.run`'s built-in execution and shape the output yourself.
 
 ## Per-tenant engines
 
@@ -229,7 +236,7 @@ constructor(
 search(input: GenQueryInput<User>, isAdmin: boolean) {
   const engine = isAdmin ? this.adminEngine : this.publicEngine;
   const qb = this.users.createQueryBuilder("User");
-  return engine.run(input, qb).getMany();
+  return engine.run(input, qb);     // { data, current?, total? }
 }
 ```
 
@@ -283,11 +290,12 @@ describe("UsersService", () => {
   });
 
   it("filters by string field", async () => {
-    const result = await svc.search({
+    const { data, total } = await svc.search({
       searchBy: { firstName: "mario" },
       pagination: { page: 0, perPage: 20 },
     });
-    expect(result).toBeDefined();
+    expect(data).toEqual(expect.any(Array));
+    expect(total).toEqual(expect.any(Number));
   });
 });
 ```
@@ -296,7 +304,7 @@ For unit tests that don't need a real DB, build a fake engine and override the p
 
 ```typescript
 const fakeEngine = {
-  run: jest.fn().mockReturnValue({ getMany: () => Promise.resolve([]) }),
+  run: jest.fn().mockResolvedValue({ data: [], current: 0, total: 0 }),
 };
 
 const moduleRef = await Test.createTestingModule({
