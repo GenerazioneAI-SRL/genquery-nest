@@ -150,6 +150,28 @@ internalList(@SearchInput({ allow: ["searchBy", "orderBy", "select", "include", 
   input: GenQueryInput<User>) { /* ... */ }
 ```
 
+### JSON strings in the query
+
+By default, `@GenQuery()` parses each canonical key's value as JSON when it arrives as a string starting with `{` or `[`. Two equivalent requests:
+
+```
+GET /users?searchBy={"firstName":"ada","posts":{"title":"typescript"}}&pagination={"page":0,"perPage":20}
+GET /users?searchBy[firstName]=ada&searchBy[posts][title]=typescript&pagination[page]=0&pagination[perPage]=20
+```
+
+Pick whichever fits your clients — they yield the same `GenQueryInput` after the decorator runs. The JSON form keeps native types (`true`, `42`, `null`) intact; the bracket form passes everything as strings and needs a coercion pipe for `number` / `boolean` columns.
+
+Tune with `parseJson`:
+
+```typescript
+@Get()
+list(@GenQuery({ parseJson: true })  input: GenQueryInput<User>) {}   // require JSON
+@Get()
+list(@GenQuery({ parseJson: false }) input: GenQueryInput<User>) {}   // never parse
+```
+
+`true` makes invalid JSON a 400. `"auto"` (default) only parses values that look like JSON, leaving bare-string shorthands (`orderBy=createdAt`, `pagination=all`) alone.
+
 ### Forcing a source
 
 `from: "auto"` (the default) reads `request.query` on `GET`/`HEAD` and `request.body` everywhere else. Override only when you need to break that convention:

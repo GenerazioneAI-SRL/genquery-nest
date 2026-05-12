@@ -246,6 +246,7 @@ The same decorator works on `@Post()` endpoints — it reads the body instead. U
 | `keys`   | `Partial<Record<CanonicalKey, string>>` | identity      | Map canonical → external name. Unmapped keys keep their name.      |
 | `allow`  | `readonly CanonicalGenQueryKey[]`   | all five      | Whitelist of canonical keys to honor.                              |
 | `strict` | `boolean`                           | `false`       | Throw on keys that are neither mapped nor in `allow`.              |
+| `parseJson` | `boolean \| "auto"`              | `"auto"`      | `auto` = parse string values that start with `{`/`[`. Lets `?searchBy={...}` and `?orderBy=createdAt` coexist. `true` always parses (400 on invalid JSON), `false` disables. |
 | `from`   | `"auto" \| "query" \| "body"`       | `"auto"`      | `auto` = `query` for GET/HEAD, `body` otherwise. Override to force one. |
 
 ### Project-wide defaults
@@ -271,6 +272,34 @@ list(@SearchInput() input: GenQueryInput<User>) { ... }
 @Get("export")
 exportAll(@SearchInput({ allow: ["searchBy"] }) input: GenQueryInput<User>) { ... }
 ```
+
+### Passing JSON strings in the query
+
+`@GenQuery()` also accepts whole-JSON values per top-level key, so the wire form
+
+```
+GET /users?searchBy={"firstName":"ada"}&orderBy={"field":"createdAt","order":"desc"}&pagination={"page":0,"perPage":20}
+```
+
+is parsed as
+
+```typescript
+{
+  searchBy:   { firstName: "ada" },
+  orderBy:    { field: "createdAt", order: "desc" },
+  pagination: { page: 0, perPage: 20 },
+}
+```
+
+The default `parseJson: "auto"` only kicks in when the string starts with `{` or `[`, so bare-string shorthands keep working on the same endpoint:
+
+```
+GET /users?orderBy=createdAt&pagination=all
+```
+
+…stays a plain string `"createdAt"` / `"all"` (which the engine accepts). Invalid JSON in a value that clearly tried to be JSON (`?searchBy={broken`) yields a `BadRequestException`. Set `parseJson: false` to disable the behavior, or `parseJson: true` to require JSON for every value.
+
+> ℹ Remember to URL-encode the JSON value (`encodeURIComponent`) — most clients do this automatically.
 
 ### GET vs POST — when to use which
 

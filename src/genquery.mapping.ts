@@ -38,6 +38,19 @@ export interface GenQueryMappingOptions {
    * Defaults to `false`.
    */
   strict?: boolean;
+  /**
+   * Parse the value of each canonical key as JSON when it arrives as a string.
+   * Useful for query strings like `?searchBy={"firstName":"ada"}` instead of
+   * the bracket-notation form `?searchBy[firstName]=ada`.
+   *
+   *  - `"auto"` (default) — only parse when the trimmed string starts with
+   *    `{` or `[`. Bare strings (`orderBy=createdAt`, `pagination=all`) are
+   *    passed through untouched, so JSON and shorthand forms coexist.
+   *  - `true`  — always attempt `JSON.parse` on string values. Invalid JSON
+   *    becomes a `BadRequestException`.
+   *  - `false` — never parse; pass strings through as-is.
+   */
+  parseJson?: boolean | "auto";
 }
 
 const IDENTITY_KEYS: Required<GenQueryKeyMapping> = {
@@ -84,13 +97,18 @@ export function mapToGenQueryInput<T = unknown>(
   }
 
   const source = raw as Record<string, unknown>;
+  const parseMode = options.parseJson ?? "auto";
   const output: Partial<Record<CanonicalGenQueryKey, unknown>> = {};
   const unexpected: string[] = [];
 
   for (const externalKey of Object.keys(source)) {
     const canonical = externalToCanonical.get(externalKey);
     if (canonical) {
-      output[canonical] = source[externalKey];
+      output[canonical] = maybeParseJson(
+        source[externalKey],
+        parseMode,
+        externalKey,
+      );
     } else if (options.strict) {
       unexpected.push(externalKey);
     }
@@ -105,6 +123,26 @@ export function mapToGenQueryInput<T = unknown>(
   }
 
   return output as GenQueryInput<T>;
+}
+
+function maybeParseJson(
+  value: unknown,
+  mode: boolean | "auto",
+  externalKey: string,
+): unknown {
+  if (mode === false || typeof value !== "string") return value;
+  if (mode === "auto") {
+    const head = value.trimStart()[0];
+    if (head !== "{" && head !== "[") return value;
+  }
+  try {
+    return JSON.parse(value);
+  } catch (err) {
+    throw new BadRequestException({
+      message: `Invalid JSON for query key "${externalKey}"`,
+      detail: (err as Error).message,
+    });
+  }
 }
 
 /**
@@ -122,5 +160,6 @@ export function mergeGenQueryMappingOptions(
     keys: { ...defaults.keys, ...override.keys },
     allow: override.allow ?? defaults.allow,
     strict: override.strict ?? defaults.strict,
+    parseJson: override.parseJson ?? defaults.parseJson,
   };
 }

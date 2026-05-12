@@ -1,6 +1,6 @@
 {
   "name": "@generazioneai/genquery-nestjs",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "NestJS module for @generazioneai/genquery — DI-friendly TypeORM engine integration",
   "license": "BSD-3-Clause",
   "publishConfig": {
