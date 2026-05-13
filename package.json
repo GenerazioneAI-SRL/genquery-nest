@@ -1,7 +1,7 @@
 {
   "name": "@generazioneai/genquery-nestjs",
-  "version": "0.1.2",
-  "description": "NestJS module for @generazioneai/genquery — DI-friendly TypeORM engine integration",
+  "version": "0.2.0",
+  "description": "NestJS module for @generazioneai/genquery — DI-friendly TypeORM + Prisma engine integration",
   "license": "BSD-3-Clause",
   "publishConfig": {
     "access": "public"
@@ -21,6 +21,7 @@
     "query",
     "query-builder",
     "typeorm",
+    "prisma",
     "json-query",
     "dsl",
     "filter",
@@ -39,16 +40,28 @@
     "prepublishOnly": "npm run build"
   },
   "peerDependencies": {
-    "@generazioneai/genquery": "^0.1.1",
+    "@generazioneai/genquery": "^0.2.0",
     "@nestjs/common": ">=9.0.0",
     "@nestjs/core": ">=9.0.0",
     "@nestjs/typeorm": ">=9.0.0",
+    "@prisma/client": ">=5.0.0",
     "reflect-metadata": "^0.1.13 || ^0.2.0",
     "rxjs": "^7.0.0",
     "typeorm": ">=0.3.0"
   },
+  "peerDependenciesMeta": {
+    "@nestjs/typeorm": {
+      "optional": true
+    },
+    "@prisma/client": {
+      "optional": true
+    },
+    "typeorm": {
+      "optional": true
+    }
+  },
   "devDependencies": {
-    "@generazioneai/genquery": "^0.1.1",
+    "@generazioneai/genquery": "file:../genquery",
     "@nestjs/common": "^10.0.0",
     "@nestjs/core": "^10.0.0",
     "@nestjs/typeorm": "^10.0.0",

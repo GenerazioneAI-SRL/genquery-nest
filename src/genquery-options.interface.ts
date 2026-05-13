@@ -28,6 +28,11 @@ export interface GenQueryFactoryOptions {
 export interface GenQueryModuleOptions extends GenQueryFactoryOptions {
   name?: string;
   dataSource?: string | symbol | Function;
+  /**
+   * Register as a global module so the engine is injectable everywhere
+   * without re-importing. Defaults to `false`.
+   */
+  global?: boolean;
 }
 
 /**
@@ -38,6 +43,7 @@ export interface GenQueryModuleAsyncOptions
   extends Pick<ModuleMetadata, "imports"> {
   name?: string;
   dataSource?: string | symbol | Function;
+  global?: boolean;
   useExisting?: Type<GenQueryOptionsFactory>;
   useClass?: Type<GenQueryOptionsFactory>;
   useFactory?: (

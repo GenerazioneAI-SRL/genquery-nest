@@ -24,6 +24,24 @@ export type {
   GenQueryOptionsFactory,
   CreateTypeORMEngineOptions,
 } from "./genquery-options.interface.js";
+export type {
+  GenQueryPrismaFactoryOptions,
+  GenQueryPrismaModuleAsyncOptions,
+  GenQueryPrismaModuleOptions,
+  GenQueryPrismaOptionsFactory,
+  CreatePrismaEngineOptions,
+} from "./genquery-prisma-options.interface.js";
+
+// Re-export Prisma adapter helpers so consumers don't need a second import.
+export {
+  schemaFromPrisma,
+  type SchemaFromPrismaOptions,
+  type PrismaAdapterOptions,
+  type PrismaDatamodel,
+  type PrismaFindManyArgs,
+  type PrismaModelDelegate,
+  type PrismaWhere,
+} from "@generazioneai/genquery/prisma";
 
 // Re-export the core engine types so consumers can type their dependencies
 // without a second import from the underlying package.

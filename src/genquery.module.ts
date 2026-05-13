@@ -1,24 +1,62 @@
 import { DynamicModule, Module, Provider, Type } from "@nestjs/common";
-import { getDataSourceToken } from "@nestjs/typeorm";
-import { createTypeORMEngine } from "@generazioneai/genquery/typeorm";
-import type { DataSource } from "typeorm";
+import { createPrismaEngine } from "@generazioneai/genquery/prisma";
 import { getGenQueryEngineToken } from "./genquery.tokens.js";
+
+// `@nestjs/typeorm` + `typeorm` + the TypeORM adapter are loaded lazily so
+// Prisma-only consumers don't need to install them. The require calls only
+// fire when a TypeORM factory is invoked.
+type DataSource = unknown;
+function loadTypeORMDeps(): {
+  getDataSourceToken: (name?: string) => string | symbol | Function;
+  createTypeORMEngine: (
+    ds: DataSource,
+    opts: { schema?: unknown; adapter?: unknown },
+  ) => unknown;
+} {
+  // eslint-disable-next-line @typescript-eslint/no-require-imports
+  const { getDataSourceToken } = require("@nestjs/typeorm");
+  // eslint-disable-next-line @typescript-eslint/no-require-imports
+  const { createTypeORMEngine } = require("@generazioneai/genquery/typeorm");
+  return { getDataSourceToken, createTypeORMEngine };
+}
 import type {
   GenQueryFactoryOptions,
   GenQueryModuleAsyncOptions,
   GenQueryModuleOptions,
   GenQueryOptionsFactory,
 } from "./genquery-options.interface.js";
+import type {
+  GenQueryPrismaFactoryOptions,
+  GenQueryPrismaModuleAsyncOptions,
+  GenQueryPrismaModuleOptions,
+  GenQueryPrismaOptionsFactory,
+} from "./genquery-prisma-options.interface.js";
 
 const GENQUERY_FACTORY_OPTIONS = "GENQUERY_FACTORY_OPTIONS";
+const GENQUERY_PRISMA_FACTORY_OPTIONS = "GENQUERY_PRISMA_FACTORY_OPTIONS";
 
 /**
- * NestJS module that exposes a `GenQueryEngine` built on the TypeORM adapter.
+ * NestJS module that exposes a `GenQueryEngine` built on either the TypeORM
+ * or the Prisma adapter.
+ *
+ * TypeORM:
  *
  *   @Module({
  *     imports: [
  *       TypeOrmModule.forRoot({ ... entities: [User, Post] }),
  *       GenQueryModule.forRoot(),
+ *     ],
+ *   })
+ *   export class AppModule {}
+ *
+ * Prisma:
+ *
+ *   @Module({
+ *     imports: [
+ *       GenQueryModule.forPrismaRoot({
+ *         prisma: PrismaService,
+ *         datamodel: Prisma.dmmf.datamodel,
+ *       }),
  *     ],
  *   })
  *   export class AppModule {}
@@ -30,16 +68,22 @@ const GENQUERY_FACTORY_OPTIONS = "GENQUERY_FACTORY_OPTIONS";
  *
  * The default DataSource is resolved via `getDataSourceToken()`. For a non-
  * default TypeORM connection pass `dataSource: "<name>"`. To register more
- * than one engine, pass distinct `name` values.
+ * than one engine pass distinct `name` values; mixed TypeORM + Prisma engines
+ * coexist via distinct names.
  */
 @Module({})
 export class GenQueryModule {
+  // --------------------------------------------------------------------------
+  // TypeORM
+  // --------------------------------------------------------------------------
+
   /**
-   * Synchronous registration. Use this when the schema / adapter options are
+   * Synchronous TypeORM registration. Use when schema / adapter options are
    * known at module-construction time.
    */
   static forRoot(options: GenQueryModuleOptions = {}): DynamicModule {
-    const { name, dataSource, ...factoryOptions } = options;
+    const { getDataSourceToken, createTypeORMEngine } = loadTypeORMDeps();
+    const { name, dataSource, global, ...factoryOptions } = options;
     const engineToken = getGenQueryEngineToken(name);
     const dataSourceToken = dataSource ?? getDataSourceToken();
 
@@ -51,16 +95,18 @@ export class GenQueryModule {
 
     return {
       module: GenQueryModule,
+      global: global ?? false,
       providers: [engineProvider],
       exports: [engineProvider],
     };
   }
 
   /**
-   * Async registration via `useFactory` / `useClass` / `useExisting`. Use this
-   * when options depend on injected services (e.g. config service).
+   * Async TypeORM registration via `useFactory` / `useClass` / `useExisting`.
+   * Use when options depend on injected services (e.g. a config service).
    */
   static forRootAsync(options: GenQueryModuleAsyncOptions): DynamicModule {
+    const { getDataSourceToken, createTypeORMEngine } = loadTypeORMDeps();
     const engineToken = getGenQueryEngineToken(options.name);
     const dataSourceToken = options.dataSource ?? getDataSourceToken();
 
@@ -75,6 +121,7 @@ export class GenQueryModule {
 
     return {
       module: GenQueryModule,
+      global: options.global ?? false,
       imports: options.imports ?? [],
       providers: [...optionsProviders, engineProvider],
       exports: [engineProvider],
@@ -125,4 +172,140 @@ export class GenQueryModule {
       "GenQueryModule.forRootAsync requires one of: useFactory, useClass, useExisting.",
     );
   }
+
+  // --------------------------------------------------------------------------
+  // Prisma
+  // --------------------------------------------------------------------------
+
+  /**
+   * Synchronous Prisma registration.
+   *
+   *   GenQueryModule.forPrismaRoot({
+   *     prisma: PrismaService,
+   *     datamodel: Prisma.dmmf.datamodel,
+   *     schema: { models: ["User", "Post"] },
+   *   });
+   *
+   * `prisma` is the DI token that resolves to your `PrismaClient` /
+   * `PrismaService` instance.
+   */
+  static forPrismaRoot(options: GenQueryPrismaModuleOptions): DynamicModule {
+    const { name, prisma, model, global, ...factoryOptions } = options;
+    const engineToken = getGenQueryEngineToken(name);
+
+    const engineProvider: Provider = {
+      provide: engineToken,
+      useFactory: (client: Record<string, unknown>) =>
+        buildPrismaEngine(client, factoryOptions, model),
+      inject: [prisma],
+    };
+
+    return {
+      module: GenQueryModule,
+      global: global ?? false,
+      providers: [engineProvider],
+      exports: [engineProvider],
+    };
+  }
+
+  /**
+   * Async Prisma registration via `useFactory` / `useClass` / `useExisting`.
+   *
+   *   GenQueryModule.forPrismaRootAsync({
+   *     prisma: PrismaService,
+   *     useFactory: () => ({ datamodel: Prisma.dmmf.datamodel }),
+   *   });
+   */
+  static forPrismaRootAsync(
+    options: GenQueryPrismaModuleAsyncOptions,
+  ): DynamicModule {
+    const engineToken = getGenQueryEngineToken(options.name);
+    const { prisma, model } = options;
+
+    const optionsProviders = this.createPrismaAsyncOptionsProviders(options);
+
+    const engineProvider: Provider = {
+      provide: engineToken,
+      useFactory: (
+        factoryOptions: GenQueryPrismaFactoryOptions,
+        client: Record<string, unknown>,
+      ) => buildPrismaEngine(client, factoryOptions, model),
+      inject: [GENQUERY_PRISMA_FACTORY_OPTIONS, prisma],
+    };
+
+    return {
+      module: GenQueryModule,
+      global: options.global ?? false,
+      imports: options.imports ?? [],
+      providers: [...optionsProviders, engineProvider],
+      exports: [engineProvider],
+    };
+  }
+
+  private static createPrismaAsyncOptionsProviders(
+    options: GenQueryPrismaModuleAsyncOptions,
+  ): Provider[] {
+    if (options.useFactory) {
+      return [
+        {
+          provide: GENQUERY_PRISMA_FACTORY_OPTIONS,
+          useFactory: options.useFactory,
+          inject: options.inject ?? [],
+        },
+      ];
+    }
+
+    if (options.useExisting) {
+      return [
+        {
+          provide: GENQUERY_PRISMA_FACTORY_OPTIONS,
+          useFactory: (factory: GenQueryPrismaOptionsFactory) =>
+            factory.createGenQueryPrismaOptions(),
+          inject: [options.useExisting],
+        },
+      ];
+    }
+
+    if (options.useClass) {
+      const useClass = options.useClass as Type<GenQueryPrismaOptionsFactory>;
+      return [
+        {
+          provide: GENQUERY_PRISMA_FACTORY_OPTIONS,
+          useFactory: (factory: GenQueryPrismaOptionsFactory) =>
+            factory.createGenQueryPrismaOptions(),
+          inject: [useClass],
+        },
+        {
+          provide: useClass,
+          useClass,
+        },
+      ];
+    }
+
+    throw new Error(
+      "GenQueryModule.forPrismaRootAsync requires one of: useFactory, useClass, useExisting.",
+    );
+  }
+}
+
+/**
+ * Build a Prisma-backed engine from a resolved Prisma client. Validates that
+ * the named model exists on the client when `model` is set — early-fail so
+ * the caller doesn't get a cryptic `cannot read property 'findMany' of
+ * undefined` at query time.
+ */
+function buildPrismaEngine(
+  client: Record<string, unknown>,
+  factoryOptions: GenQueryPrismaFactoryOptions,
+  model: string | undefined,
+) {
+  const { datamodel, schema, adapter } = factoryOptions;
+  const engine = createPrismaEngine(datamodel, { schema, adapter });
+  if (model !== undefined && !(model in client)) {
+    throw new Error(
+      `GenQueryModule: Prisma client has no delegate for model '${model}'. ` +
+        "Check that the name matches the field on your PrismaClient (camelCased model name).",
+    );
+  }
+  return engine;
 }
