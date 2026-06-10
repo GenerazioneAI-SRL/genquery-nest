@@ -9,6 +9,8 @@ import {
   pluralizeCamel,
   toFederatedShape,
   FederationPlanError,
+  type AliasMap,
+  type AlwaysIncludeItem,
   type FederatedIncludePlan,
   type FederatedServiceShape,
   type FederationIndex,
@@ -43,10 +45,21 @@ export interface FederationServiceConfig {
 
 export interface GenQueryFederationOptions {
   services: FederationServiceConfig[];
-  /** Max ids per batch fetch towards a target service. Default 200 (typical genquery page cap). */
+  /**
+   * Alias semantici GLOBALI key → model target (es. { customer: 'Juridical',
+   * submitter: 'JuridicalIndividual' }) — dichiarati una volta, validi per ogni send.
+   */
+  aliasMap?: AliasMap;
+  /** Max ids per batch fetch towards a target service. Default 200. */
   chunkSize?: number;
   /** Per-RPC timeout in ms. Default 15000. */
   timeoutMs?: number;
+  /**
+   * Se true, un include federato fallito (RPC/timeout) propaga l'errore e fa fallire
+   * l'intera send. Default false = BEST-EFFORT: l'include che fallisce resta null
+   * (left-join), si logga un WARN, la risposta radice non viene buttata via.
+   */
+  failFast?: boolean;
 }
 
 export interface FederatedSendArgs {
@@ -59,11 +72,14 @@ export interface FederatedSendArgs {
   /** Full payload: genquery envelope + trusted scope keys (juridicalId, auth, ...). */
   payload?: Record<string, any>;
   /**
-   * Federated keys resolved even when the client did not ask for them.
-   * Back-compat with endpoints that historically always enriched.
+   * Federated keys resolved even when il client non le chiede (retro-compat con
+   * endpoint che arricchivano sempre). Supporta shape annidata per ripristinare i
+   * nested dei vecchi populate: `{ key: 'juridicalIndividual', include: { individual: true } }`.
    */
-  alwaysInclude?: readonly string[];
-  /** Per-key explicit targets for ambiguous/unconventional relations. */
+  alwaysInclude?: readonly AlwaysIncludeItem[];
+  /** Alias semantici per questa call (merge sopra l'aliasMap globale del modulo). */
+  aliasMap?: AliasMap;
+  /** Per-key explicit targets for ambiguous/unconventional relations (vince su aliasMap). */
   overrides?: Record<string, { service: string; model?: string; fk?: string }>;
   timeoutMs?: number;
 }
@@ -86,6 +102,8 @@ export class GenQueryFederation {
   private readonly byClientToken = new Map<string | symbol, FederationServiceConfig>();
   private readonly chunkSize: number;
   private readonly timeoutMs: number;
+  private readonly aliasMap?: AliasMap;
+  private readonly failFast: boolean;
 
   constructor(
     @Inject(GENQUERY_FEDERATION_OPTIONS)
@@ -104,6 +122,8 @@ export class GenQueryFederation {
     this.index = buildFederationIndex(shapes);
     this.chunkSize = options.chunkSize ?? 200;
     this.timeoutMs = options.timeoutMs ?? 15000;
+    this.aliasMap = options.aliasMap;
+    this.failFast = options.failFast ?? false;
   }
 
   async send<T = any>(args: FederatedSendArgs): Promise<T> {
@@ -121,6 +141,7 @@ export class GenQueryFederation {
       model: args.model,
       include: this.asObject(payload.include),
       alwaysInclude: args.alwaysInclude,
+      aliasMap: args.aliasMap ? { ...this.aliasMap, ...args.aliasMap } : this.aliasMap,
       overrides: args.overrides,
     });
 
@@ -135,7 +156,23 @@ export class GenQueryFederation {
 
     const rows = this.extractRows(result);
     if (rows.length) {
-      await Promise.all(plan.remote.map((p) => this.resolvePlan(p, rows, ms)));
+      // Ogni chiave remota in parallelo. BEST-EFFORT: un include fallito non butta
+      // via la risposta radice già pronta — resta null (left-join) + WARN.
+      // failFast=true → propaga il primo errore.
+      const settled = await Promise.allSettled(
+        plan.remote.map((p) => this.resolvePlan(p, rows, ms)),
+      );
+      const failures = settled.filter((s) => s.status === "rejected");
+      if (failures.length) {
+        if (this.failFast) throw (failures[0] as PromiseRejectedResult).reason;
+        for (const f of failures) {
+          const reason = (f as PromiseRejectedResult).reason;
+          this.logger.warn(
+            `[federation] include non risolto su ${cfg.service}/${args.model}: ` +
+              (reason instanceof Error ? reason.message : String(reason)),
+          );
+        }
+      }
     }
     return result;
   }
@@ -162,24 +199,30 @@ export class GenQueryFederation {
     const prefix =
       target.cmdOverrides?.[plan.targetModel] ?? pluralizeCamel(plan.targetModel);
 
-    const fetched: any[] = [];
+    // Chunk per stare sotto eventuali cap; ogni chunk usa pagination:'all' così il
+    // cap maxPerPage dell'owner NON tronca silenziosamente il batch (il parser non
+    // applica maxPerPage a 'all'). I chunk dello stesso target vanno in parallelo.
+    const chunks: string[][] = [];
     for (let i = 0; i < ids.length; i += this.chunkSize) {
-      const chunk = ids.slice(i, i + this.chunkSize);
-      const envelope: Record<string, unknown> = {
-        // genquery IN: array value on the id field.
-        searchBy: { id: chunk },
-        pagination: { page: 0, perPage: chunk.length },
-        ...(plan.nested?.include ? { include: plan.nested.include } : {}),
-        ...(plan.nested?.select ? { select: plan.nested.select } : {}),
-      };
-      const res = await this.rpc<unknown>(
-        target.clientToken,
-        `${prefix}.findAll`,
-        envelope,
-        timeoutMs,
-      );
-      fetched.push(...this.extractRows(res));
+      chunks.push(ids.slice(i, i + this.chunkSize));
     }
+    const results = await Promise.all(
+      chunks.map((chunk) => {
+        const envelope: Record<string, unknown> = {
+          searchBy: { id: chunk }, // genquery IN
+          pagination: "all",
+          ...(plan.nested?.include ? { include: plan.nested.include } : {}),
+          ...(plan.nested?.select ? { select: plan.nested.select } : {}),
+        };
+        return this.rpc<unknown>(
+          target.clientToken,
+          `${prefix}.findAll`,
+          envelope,
+          timeoutMs,
+        );
+      }),
+    );
+    const fetched = results.flatMap((res) => this.extractRows(res));
     mergeFederatedRows(rows, plan, fetched);
   }
 
