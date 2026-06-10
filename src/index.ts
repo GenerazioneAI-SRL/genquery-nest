@@ -1,4 +1,13 @@
 export { GenQueryModule } from "./genquery.module.js";
+export { GenQueryFederationModule } from "./genquery-federation.module.js";
+export {
+  GenQueryFederation,
+  type FederationServiceConfig,
+  type GenQueryFederationOptions,
+  type FederatedSendArgs,
+  type MessageClientLike,
+} from "./genquery-federation.service.js";
+export { GENQUERY_FEDERATION_OPTIONS } from "./genquery-federation.tokens.js";
 export { InjectGenQueryEngine } from "./genquery.decorators.js";
 export {
   DEFAULT_GENQUERY_ENGINE_NAME,
