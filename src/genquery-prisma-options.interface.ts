@@ -1,10 +1,26 @@
 import type { ModuleMetadata, Type } from "@nestjs/common";
+import type { PolicyManifestLike } from "@generazioneai/genquery";
 import type {
   CreatePrismaEngineOptions,
   PrismaAdapterOptions,
   PrismaDatamodel,
   SchemaFromPrismaOptions,
 } from "@generazioneai/genquery/prisma";
+
+/**
+ * Declarative policy input: instead of pre-building the EntityPolicy map, pass the
+ * resource manifests (+ optional per-model deny / extra secret fields) and the module
+ * derives the DENY-based policy via `buildGenQueryPolicy` over the same `datamodel`.
+ * Lets a backend drop its `src/authz/genquery-policy.ts` wrapper entirely.
+ */
+export interface GenQueryPolicyInput {
+  /** Resource manifests (structural) — drive maxPerPage from autoquery.pagination.max. */
+  resources: readonly PolicyManifestLike[];
+  /** Per-model extra deny beyond the canonical secret fields. */
+  deny?: Record<string, { fields?: readonly string[]; relations?: readonly string[] }>;
+  /** Extra secret field names added to the canonical DEFAULT_SECRET_FIELDS. */
+  extraSecretFields?: Iterable<string>;
+}
 
 /**
  * Shape that `useFactory` (and similar async providers) must return for the
@@ -19,6 +35,13 @@ export interface GenQueryPrismaFactoryOptions {
   datamodel: PrismaDatamodel;
   schema?: SchemaFromPrismaOptions;
   adapter?: PrismaAdapterOptions;
+  /**
+   * Build the EntityPolicy automatically from resource manifests (DENY-based,
+   * canonical secret fields excluded) over `datamodel`. The result is merged into
+   * `schema.policy` (an explicit `schema.policy` entry wins). When set, the backend
+   * no longer needs a hand-written `genquery-policy.ts`.
+   */
+  policy?: GenQueryPolicyInput;
 }
 
 /**

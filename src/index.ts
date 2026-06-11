@@ -38,6 +38,7 @@ export type {
   GenQueryPrismaModuleAsyncOptions,
   GenQueryPrismaModuleOptions,
   GenQueryPrismaOptionsFactory,
+  GenQueryPolicyInput,
   CreatePrismaEngineOptions,
 } from "./genquery-prisma-options.interface.js";
 

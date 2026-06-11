@@ -1,5 +1,6 @@
 import { DynamicModule, Module, Provider, Type } from "@nestjs/common";
 import { createPrismaEngine } from "@generazioneai/genquery/prisma";
+import { buildGenQueryPolicy } from "@generazioneai/genquery";
 import { getGenQueryEngineToken } from "./genquery.tokens.js";
 
 // `@nestjs/typeorm` + `typeorm` + the TypeORM adapter are loaded lazily so
@@ -299,8 +300,23 @@ function buildPrismaEngine(
   factoryOptions: GenQueryPrismaFactoryOptions,
   model: string | undefined,
 ) {
-  const { datamodel, schema, adapter } = factoryOptions;
-  const engine = createPrismaEngine(datamodel, { schema, adapter });
+  const { datamodel, schema, adapter, policy } = factoryOptions;
+  let effectiveSchema = schema;
+  if (policy) {
+    // Build the DENY-based EntityPolicy from the manifests over the same datamodel.
+    // An explicit `schema.policy` entry wins over the auto-built one (override hook).
+    const built = buildGenQueryPolicy({
+      datamodel,
+      manifests: policy.resources,
+      deny: policy.deny,
+      extraSecretFields: policy.extraSecretFields,
+    });
+    effectiveSchema = {
+      ...(schema ?? {}),
+      policy: { ...built, ...(schema?.policy ?? {}) },
+    };
+  }
+  const engine = createPrismaEngine(datamodel, { schema: effectiveSchema, adapter });
   if (model !== undefined && !(model in client)) {
     throw new Error(
       `GenQueryModule: Prisma client has no delegate for model '${model}'. ` +
