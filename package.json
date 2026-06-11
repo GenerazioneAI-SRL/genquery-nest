@@ -1,6 +1,6 @@
 {
   "name": "@generazioneai/genquery-nestjs",
-  "version": "0.9.0",
+  "version": "0.9.1",
   "description": "NestJS module for @generazioneai/genquery — DI-friendly Prisma engine integration",
   "license": "BSD-3-Clause",
   "publishConfig": {
@@ -34,7 +34,7 @@
     "LICENSE"
   ],
   "scripts": {
-    "build": "tsc",
+    "build": "rm -rf dist && tsc",
     "typecheck": "tsc --noEmit",
     "prepublishOnly": "npm run build"
   },
