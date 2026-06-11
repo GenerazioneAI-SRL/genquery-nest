@@ -28,13 +28,6 @@ export {
   type GenQueryParamOptions,
 } from "./genquery.param.decorator.js";
 export type {
-  GenQueryFactoryOptions,
-  GenQueryModuleAsyncOptions,
-  GenQueryModuleOptions,
-  GenQueryOptionsFactory,
-  CreateTypeORMEngineOptions,
-} from "./genquery-options.interface.js";
-export type {
   GenQueryPrismaFactoryOptions,
   GenQueryPrismaModuleAsyncOptions,
   GenQueryPrismaModuleOptions,
