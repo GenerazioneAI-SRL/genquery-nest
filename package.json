@@ -1,6 +1,6 @@
 {
   "name": "@generazioneai/genquery-nestjs",
-  "version": "0.7.0",
+  "version": "0.8.0",
   "description": "NestJS module for @generazioneai/genquery — DI-friendly TypeORM + Prisma engine integration",
   "license": "BSD-3-Clause",
   "publishConfig": {
@@ -43,6 +43,7 @@
     "@generazioneai/genquery": ">=0.11.0",
     "@nestjs/common": ">=9.0.0",
     "@nestjs/core": ">=9.0.0",
+    "@nestjs/swagger": ">=7.0.0",
     "@nestjs/typeorm": ">=9.0.0",
     "@prisma/client": ">=5.0.0",
     "reflect-metadata": "^0.1.13 || ^0.2.0",
@@ -58,17 +59,32 @@
     },
     "typeorm": {
       "optional": true
+    },
+    "@nestjs/swagger": {
+      "optional": true
     }
   },
   "devDependencies": {
     "@generazioneai/genquery": "^0.12.0",
     "@nestjs/common": "^10.0.0",
     "@nestjs/core": "^10.0.0",
+    "@nestjs/swagger": "^11.4.4",
     "@nestjs/typeorm": "^10.0.0",
     "@types/node": "^20.0.0",
     "reflect-metadata": "^0.2.2",
     "rxjs": "^7.8.1",
     "typeorm": "^0.3.20",
     "typescript": "^5.4.0"
+  },
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    },
+    "./swagger": {
+      "types": "./dist/swagger.d.ts",
+      "default": "./dist/swagger.js"
+    },
+    "./package.json": "./package.json"
   }
 }

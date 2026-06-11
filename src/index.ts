@@ -1,5 +1,6 @@
 export { GenQueryModule } from "./genquery.module.js";
 export { GenQueryFederationModule } from "./genquery-federation.module.js";
+export { rpcCall } from "./rpc-call.js";
 export {
   GenQueryFederation,
   type FederationServiceConfig,
