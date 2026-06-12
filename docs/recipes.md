@@ -47,29 +47,26 @@ The engine is a stateless adapter — keep it in the service layer and let the c
 @Injectable()
 export class UsersService {
   constructor(
-    @InjectRepository(User) private readonly users: Repository<User>,
+    private readonly prisma: PrismaService,
     @InjectGenQueryEngine()
-    private readonly engine: GenQueryEngine<
-      SelectQueryBuilder<ObjectLiteral>,
-      SelectQueryBuilder<ObjectLiteral>
-    >,
+    private readonly engine: GenQueryEngine<any, any>,
   ) {}
 
   // `engine.run` executes the query and resolves to a `PaginatedResult<User>`:
   //   { data: User[], current?: number, total?: number }
   // `current` / `total` are present iff the input asked for them via
   // `pagination.showNumber` / `pagination.showTotal` (both default to `true`).
-  search(input: GenQueryInput<User>): Promise<PaginatedResult<User>> {
-    const qb = this.users.createQueryBuilder("User");
-    return this.engine.run(input, qb);
+  // The root entity name is passed explicitly — Prisma delegates don't expose it.
+  search(input: GenQueryInput): Promise<PaginatedResult<User>> {
+    return this.engine.run(input, "User", this.prisma.user);
   }
 
   // Opt out of the count when you only need the rows:
-  async listOnly(input: GenQueryInput<User>): Promise<User[]> {
-    const qb = this.users.createQueryBuilder("User");
+  async listOnly(input: GenQueryInput): Promise<User[]> {
     const { data } = await this.engine.run(
       { ...input, pagination: { ...(input.pagination as object), showTotal: false } },
-      qb,
+      "User",
+      this.prisma.user,
     );
     return data;
   }
@@ -84,20 +81,20 @@ export class UsersController {
 
   // GET /users?searchBy[firstName]=mario&orderBy=createdAt&pagination[perPage]=20
   @Get()
-  list(@GenQuery() input: GenQueryInput<User>) {
+  list(@GenQuery() input: GenQueryInput) {
     return this.users.search(input);  // { data, current, total }
   }
 }
 ```
 
-`@GenQuery()` reads the request query for `GET`/`HEAD` and the body for any other method — same decorator, same handler signature. The `GenQueryInput<User>` type-parameter gives autocomplete and value-shape checking against the entity's fields and relations.
+`@GenQuery()` reads the request query for `GET`/`HEAD` and the body for any other method — same decorator, same handler signature.
 
 For large or deeply nested queries (heavy use of OR, several relation filters, mixed types) prefer POST — URL length limits and access logs make GET awkward:
 
 ```typescript
 @Post("search")
 @HttpCode(200)
-search(@GenQuery() input: GenQueryInput<User>) {
+search(@GenQuery() input: GenQueryInput) {
   return this.users.search(input);    // { data, current, total }
 }
 ```
@@ -115,10 +112,9 @@ list(
     allow:  ["searchBy", "orderBy", "pagination"],   // hide select / include
     strict: true,                                    // 400 on unknown keys
   })
-  input: GenQueryInput<User>,
+  input: GenQueryInput,
 ) {
-  const qb = this.users.createQueryBuilder("User");
-  return this.engine.run(input, qb);    // { data, current?, total? }
+  return this.users.search(input);    // { data, current?, total? }
 }
 ```
 
@@ -129,13 +125,14 @@ A read-only public endpoint that locks down everything except `filter`:
 @Get("public")
 publicList(
   @GenQuery({ keys: { searchBy: "filter" }, allow: ["searchBy"], strict: true })
-  input: GenQueryInput<User>,
+  input: GenQueryInput,
 ) {
-  const qb = this.users.createQueryBuilder("User")
-    .take(50);                              // app-imposed page size
-  return this.engine.run(input, qb);
+  // app-imposed page size: the input can't override it (pagination isn't allowed)
+  return this.users.search({ ...input, pagination: { page: 0, perPage: 50 } });
 }
 ```
+
+For server-enforced caps across the whole model surface, prefer a schema `policy` (`maxPerPage` is clamped by the parser — see the [policy section](../README.md#policy-from-resource-manifests)).
 
 For app-wide defaults, build a custom decorator once and reuse it:
 
@@ -149,12 +146,12 @@ export const SearchInput = createGenQueryDecorator({
 
 // any controller
 @Get()
-list(@SearchInput() input: GenQueryInput<User>) { /* ... */ }
+list(@SearchInput() input: GenQueryInput) { /* ... */ }
 
 // override on one endpoint
 @Get("internal")
 internalList(@SearchInput({ allow: ["searchBy", "orderBy", "select", "include", "pagination"] })
-  input: GenQueryInput<User>) { /* ... */ }
+  input: GenQueryInput) { /* ... */ }
 ```
 
 ### JSON strings in the query
@@ -172,9 +169,9 @@ Tune with `parseJson`:
 
 ```typescript
 @Get()
-list(@GenQuery({ parseJson: true })  input: GenQueryInput<User>) {}   // require JSON
+list(@GenQuery({ parseJson: true })  input: GenQueryInput) {}   // require JSON
 @Get()
-list(@GenQuery({ parseJson: false }) input: GenQueryInput<User>) {}   // never parse
+list(@GenQuery({ parseJson: false }) input: GenQueryInput) {}   // never parse
 ```
 
 `true` makes invalid JSON a 400. `"auto"` (default) only parses values that look like JSON, leaving bare-string shorthands (`orderBy=createdAt`, `pagination=all`) alone.
@@ -186,41 +183,46 @@ list(@GenQuery({ parseJson: false }) input: GenQueryInput<User>) {}   // never p
 ```typescript
 // Body of a GET request (uncommon, but supported by some frameworks):
 @Get()
-list(@GenQuery({ from: "body" }) input: GenQueryInput<User>) { /* ... */ }
+list(@GenQuery({ from: "body" }) input: GenQueryInput) { /* ... */ }
 
 // Read the URL of a POST (e.g. POST /search?paginate=true mixed with a JSON body
 // you process elsewhere):
 @Post("search")
-search(@GenQuery({ from: "query" }) input: GenQueryInput<User>) { /* ... */ }
+search(@GenQuery({ from: "query" }) input: GenQueryInput) { /* ... */ }
 ```
 
-Express's default `qs` parser turns `?filter[firstName]=mario&page[page]=0` into nested objects ready to consume. Flat params like `?page=0&perPage=20` need a small Pipe to reshape — the decorator only renames top-level keys. Note also that every query-string value is a string, so `number` / `boolean` filters need explicit coercion (a `ValidationPipe` with `transform: true` is the usual fix).
+Express's default `qs` parser turns `?filter[firstName]=mario&page[page]=0` into nested objects ready to consume. Flat params like `?page=0&perPage=20` need a small Pipe to reshape — the decorator only renames top-level keys. Note also that every query-string value is a string, so `number` / `boolean` filters need explicit coercion (whole-JSON values per key are the usual fix).
 
 ## Pre-parsing for caching
 
 For hot endpoints you can parse once and replay the result against many queries:
 
 ```typescript
-const parsed = this.engine.parse<User>(input, "User"); // cacheable
-const qb = this.users.createQueryBuilder("User");
-return this.engine.runParsed(parsed, qb).getMany();
+const parsed = this.engine.parse(input, "User");                 // cacheable
+const args   = this.engine.runParsed(parsed, this.prisma.user);  // { where, orderBy, skip, take, ... }
+const rows   = await this.prisma.user.findMany(args);
 ```
 
-The parsed form is plain data — safe to JSON-serialize into Redis or an in-memory LRU. `runParsed` is sync and returns the adapter's raw target (here the mutated `SelectQueryBuilder`) — call `getMany` / `getManyAndCount` yourself. Use this when you want to skip `engine.run`'s built-in execution and shape the output yourself.
+The parsed form is plain data — safe to JSON-serialize into Redis or an in-memory LRU. `runParsed` is sync and returns the Prisma args object without executing — call `findMany` / `count` yourself. Use this when you want to skip `engine.run`'s built-in execution and shape the output yourself (custom chaining, transactions, raw SQL around it).
 
-## Per-tenant engines
+## Per-audience engines
 
-Different schema overrides per tenant via two registrations:
+Different schema restrictions per audience via two registrations over the same Prisma client:
 
 ```typescript
 @Module({
   imports: [
-    TypeOrmModule.forRoot({ /* ... */ }),
-    GenQueryModule.forRoot({ name: "public" }),
-    GenQueryModule.forRoot({
+    GenQueryModule.forPrismaRoot({
+      name: "public",
+      prisma: PrismaService,
+      datamodel: Prisma.dmmf.datamodel,
+      schema: { models: ["User", "Post"] },          // narrow surface
+    }),
+    GenQueryModule.forPrismaRoot({
       name: "admin",
-      schema:  { overrides: { User: { internalNotes: "string" } } },
-      adapter: { paramPrefix: "a" },
+      prisma: PrismaService,
+      datamodel: Prisma.dmmf.datamodel,
+      schema: { overrides: { User: { internalNotes: "string" } } },
     }),
   ],
 })
@@ -229,29 +231,34 @@ export class AppModule {}
 
 ```typescript
 constructor(
-  @InjectGenQueryEngine("public") private readonly publicEngine: GenQueryEngine<...>,
-  @InjectGenQueryEngine("admin")  private readonly adminEngine:  GenQueryEngine<...>,
+  private readonly prisma: PrismaService,
+  @InjectGenQueryEngine("public") private readonly publicEngine: GenQueryEngine<any, any>,
+  @InjectGenQueryEngine("admin")  private readonly adminEngine:  GenQueryEngine<any, any>,
 ) {}
 
-search(input: GenQueryInput<User>, isAdmin: boolean) {
+search(input: GenQueryInput, isAdmin: boolean) {
   const engine = isAdmin ? this.adminEngine : this.publicEngine;
-  const qb = this.users.createQueryBuilder("User");
-  return engine.run(input, qb);     // { data, current?, total? }
+  return engine.run(input, "User", this.prisma.user);   // { data, current?, total? }
 }
 ```
 
-## Multiple TypeORM connections
+For field/relation allowlists (filterable / sortable / includable, `maxPerPage` caps) prefer a single engine with a schema `policy` — see the [README](../README.md#policy-from-resource-manifests).
+
+## Multiple Prisma clients
+
+If your app talks to more than one database through distinct Prisma clients, register an engine per client token:
 
 ```typescript
 @Module({
   imports: [
-    TypeOrmModule.forRoot({ /* default */ }),
-    TypeOrmModule.forRoot({ name: "reports", /* ... */ }),
-
-    GenQueryModule.forRoot(),                            // default DataSource
-    GenQueryModule.forRoot({
+    GenQueryModule.forPrismaRoot({
+      prisma: PrismaService,                             // default DB
+      datamodel: Prisma.dmmf.datamodel,
+    }),
+    GenQueryModule.forPrismaRoot({
       name: "reports",
-      dataSource: "reports",                             // → getDataSourceToken("reports")
+      prisma: ReportsPrismaService,                      // second client
+      datamodel: ReportsPrisma.dmmf.datamodel,
     }),
   ],
 })
@@ -260,47 +267,7 @@ export class AppModule {}
 
 ## Testing
 
-The engine has no side effects of its own, but it needs an initialized DataSource. With SQLite-in-memory you get a fast end-to-end test:
-
-```typescript
-// users.service.spec.ts
-import { Test } from "@nestjs/testing";
-import { TypeOrmModule } from "@nestjs/typeorm";
-import { GenQueryModule } from "@generazioneai/genquery-nestjs";
-
-describe("UsersService", () => {
-  let svc: UsersService;
-
-  beforeAll(async () => {
-    const moduleRef = await Test.createTestingModule({
-      imports: [
-        TypeOrmModule.forRoot({
-          type: "sqlite",
-          database: ":memory:",
-          entities: [User],
-          synchronize: true,
-        }),
-        TypeOrmModule.forFeature([User]),
-        GenQueryModule.forRoot(),
-      ],
-      providers: [UsersService],
-    }).compile();
-
-    svc = moduleRef.get(UsersService);
-  });
-
-  it("filters by string field", async () => {
-    const { data, total } = await svc.search({
-      searchBy: { firstName: "mario" },
-      pagination: { page: 0, perPage: 20 },
-    });
-    expect(data).toEqual(expect.any(Array));
-    expect(total).toEqual(expect.any(Number));
-  });
-});
-```
-
-For unit tests that don't need a real DB, build a fake engine and override the provider:
+The engine itself is side-effect free until `run` executes against a delegate. For unit tests that don't need a real DB, build a fake engine and override the provider:
 
 ```typescript
 const fakeEngine = {
@@ -311,30 +278,57 @@ const moduleRef = await Test.createTestingModule({
   providers: [
     UsersService,
     { provide: getGenQueryEngineToken(), useValue: fakeEngine },
-    { provide: getRepositoryToken(User), useValue: { createQueryBuilder: jest.fn() } },
+    { provide: PrismaService, useValue: { user: { findMany: jest.fn() } } },
   ],
 }).compile();
 ```
 
-## Manual provider (skip the module)
-
-If you need maximum control — e.g. building a custom adapter or sharing the engine across feature modules — register the provider yourself:
+For integration tests, register the module against a test database (the datamodel comes from your generated client either way):
 
 ```typescript
-import { createTypeORMEngine } from "@generazioneai/genquery/typeorm";
-import { getDataSourceToken } from "@nestjs/typeorm";
+const moduleRef = await Test.createTestingModule({
+  imports: [
+    GenQueryModule.forPrismaRoot({
+      prisma: PrismaService,
+      datamodel: Prisma.dmmf.datamodel,
+    }),
+  ],
+  providers: [PrismaService, UsersService],
+}).compile();
+
+const svc = moduleRef.get(UsersService);
+const { data, total } = await svc.search({
+  searchBy: { firstName: "mario" },
+  pagination: { page: 0, perPage: 20 },
+});
+```
+
+Queries that should never hit the DB can be asserted at the args level via `parse` + `runParsed` — no client needed:
+
+```typescript
+const engine = moduleRef.get(getGenQueryEngineToken());
+const args = engine.runParsed(engine.parse({ searchBy: { firstName: "mario" } }, "User"), prisma.user);
+expect(args.where).toEqual({ firstName: { contains: "mario", mode: "insensitive" } });
+```
+
+## Manual provider (skip the module)
+
+If you need maximum control — e.g. wiring a custom adapter or sharing the engine across feature modules — register the provider yourself:
+
+```typescript
+import { createPrismaEngine } from "@generazioneai/genquery/prisma";
+import { Prisma } from "@prisma/client";
 import { getGenQueryEngineToken } from "@generazioneai/genquery-nestjs";
-import type { DataSource } from "typeorm";
+import { PrismaService } from "./prisma.service";
 
 @Module({
   providers: [
     {
       provide: getGenQueryEngineToken(),
-      useFactory: (ds: DataSource) => createTypeORMEngine(ds, {
+      useFactory: () => createPrismaEngine(Prisma.dmmf.datamodel, {
         schema:  { /* ... */ },
         adapter: { /* ... */ },
       }),
-      inject: [getDataSourceToken()],
     },
   ],
   exports: [getGenQueryEngineToken()],

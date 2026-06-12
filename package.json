@@ -1,6 +1,6 @@
 {
   "name": "@generazioneai/genquery-nestjs",
-  "version": "0.9.1",
+  "version": "0.10.0",
   "description": "NestJS module for @generazioneai/genquery — DI-friendly Prisma engine integration",
   "license": "BSD-3-Clause",
   "publishConfig": {
@@ -39,7 +39,7 @@
     "prepublishOnly": "npm run build"
   },
   "peerDependencies": {
-    "@generazioneai/genquery": ">=0.13.0",
+    "@generazioneai/genquery": ">=0.13.1",
     "@nestjs/common": ">=9.0.0",
     "@nestjs/core": ">=9.0.0",
     "@nestjs/swagger": ">=7.0.0",
@@ -56,9 +56,9 @@
     }
   },
   "devDependencies": {
-    "@generazioneai/genquery": "^0.13.0",
-    "@nestjs/common": "^10.0.0",
-    "@nestjs/core": "^10.0.0",
+    "@generazioneai/genquery": "^0.13.1",
+    "@nestjs/common": "^11.0.0",
+    "@nestjs/core": "^11.0.0",
     "@nestjs/swagger": "^11.4.4",
     "@types/node": "^20.0.0",
     "reflect-metadata": "^0.2.2",
